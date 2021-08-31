@@ -5049,6 +5049,7 @@ error:
 static struct attribute *display_fs_attrs[] = {
 	NULL,
 };
+
 static struct attribute_group display_fs_attrs_group = {
 	.attrs = display_fs_attrs,
 };
