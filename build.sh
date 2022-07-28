@@ -54,7 +54,7 @@ if [ -f "$kernel" ] && [ -f "$dtb" ] && [ -f "$dtbo" ]; then
 	rm -rf AnyKernel3
 	echo -e "\nCompleted in $((SECONDS / 60)) minute(s) and $((SECONDS % 60)) second(s) !"
 	echo "Zip: $ZIPNAME"
-	curl -T $ZIPNAME temp.sh
+	curl -T $ZIPNAME https://oshi.at/$ZIPNAME > mirror.txt && cat mirror.txt
 	echo
 else
 	echo -e "\nCompilation failed!"
