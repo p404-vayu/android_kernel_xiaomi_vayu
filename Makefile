@@ -372,7 +372,7 @@ HOSTCFLAGS   := -Wall -Wmissing-prototypes -Wstrict-prototypes -O3 \
 		-fomit-frame-pointer -std=gnu11 $(HOST_LFS_CFLAGS)
 
 HOSTCXXFLAGS := -O3 $(HOST_LFS_CFLAGS)
-HOSTLDFLAGS  := $(HOST_LFS_LDFLAGS)
+HOSTLDFLAGS  += $(HOST_LFS_LDFLAGS)
 HOST_LOADLIBES := $(HOST_LFS_LIBS)
 
 ifeq ($(shell $(HOSTCC) -v 2>&1 | grep -c "clang version"), 1)
@@ -391,6 +391,8 @@ OBJCOPY		= llvm-objcopy
 OBJDUMP		= llvm-objdump
 READELF		= llvm-readelf
 STRIP		= llvm-strip
+HOSTLDFLAGS	+= -fuse-ld=lld
+HOSTCFLAGS += -fuse-ld=lld
 else
 REAL_CC		= $(CROSS_COMPILE)gcc
 LD              = $(CROSS_COMPILE)ld
