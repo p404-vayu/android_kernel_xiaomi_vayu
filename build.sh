@@ -12,8 +12,8 @@ TC_DIR=$HOME/tc/
 CLANG_DIR=$TC_DIR/clang-r458507
 export CONFIG_FILE="vayu_defconfig"
 export ARCH="arm64"
-export KBUILD_BUILD_HOST=raghavt20
-export KBUILD_BUILD_USER=raghav
+export KBUILD_BUILD_HOST=clhexftw
+export KBUILD_BUILD_USER=home
 
 export PATH="$CLANG_DIR/bin:$PATH"
 
