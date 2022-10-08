@@ -56,6 +56,13 @@ static DEFINE_MUTEX(thermal_list_lock);
 static DEFINE_MUTEX(thermal_governor_lock);
 static DEFINE_MUTEX(poweroff_lock);
 
+static atomic_t in_suspend;
+static bool power_off_triggered;
+
+static struct thermal_governor *def_governor;
+
+static struct workqueue_struct *thermal_passive_wq;
+
 #ifdef CONFIG_DRM
 struct screen_monitor {
 	struct notifier_block thermal_notifier;
@@ -65,18 +72,11 @@ struct screen_monitor {
 struct screen_monitor sm;
 #endif
 
-static atomic_t switch_mode = ATOMIC_INIT(-1);
+static atomic_t switch_mode = ATOMIC_INIT(10);
 static atomic_t temp_state = ATOMIC_INIT(0);
 static char boost_buf[128];
 const char *board_sensor;
 static char board_sensor_temp[128];
-
-static atomic_t in_suspend;
-static bool power_off_triggered;
-
-static struct thermal_governor *def_governor;
-
-static struct workqueue_struct *thermal_passive_wq;
 
 /*
  * Governor section: set of functions to handle thermal governors
@@ -325,12 +325,11 @@ static void thermal_zone_device_set_polling(struct workqueue_struct *queue,
 					    int delay)
 {
 	if (delay > 1000)
-		mod_delayed_work(system_freezable_power_efficient_wq,
-				 &tz->poll_queue,
+		mod_delayed_work(queue, &tz->poll_queue,
 				 round_jiffies(msecs_to_jiffies(delay)));
 	else if (delay)
-		mod_delayed_work(system_freezable_power_efficient_wq,
-				 &tz->poll_queue, msecs_to_jiffies(delay));
+		mod_delayed_work(queue, &tz->poll_queue,
+				 msecs_to_jiffies(delay));
 	else
 		cancel_delayed_work(&tz->poll_queue);
 }
@@ -1616,7 +1615,6 @@ static int thermal_pm_notify(struct notifier_block *nb,
 			     unsigned long mode, void *_unused)
 {
 	struct thermal_zone_device *tz;
-	enum thermal_device_mode tz_mode;
 
 	switch (mode) {
 	case PM_HIBERNATION_PREPARE:
@@ -1629,15 +1627,9 @@ static int thermal_pm_notify(struct notifier_block *nb,
 	case PM_POST_SUSPEND:
 		atomic_set(&in_suspend, 0);
 		list_for_each_entry(tz, &thermal_tz_list, node) {
-			tz_mode = THERMAL_DEVICE_ENABLED;
-			if (tz->ops->get_mode)
-				tz->ops->get_mode(tz, &tz_mode);
-
-			if ((tz->ops->is_wakeable &&
-				tz->ops->is_wakeable(tz)) ||
-				tz_mode == THERMAL_DEVICE_DISABLED)
+			if (tz->ops->is_wakeable &&
+				tz->ops->is_wakeable(tz))
 				continue;
-
 			thermal_zone_device_init(tz);
 			thermal_zone_device_update(tz,
 						   THERMAL_EVENT_UNSPECIFIED);
@@ -1661,7 +1653,7 @@ thermal_screen_state_show(struct device *dev,
 	return snprintf(buf, PAGE_SIZE, "%d\n", sm.screen_state);
 }
 
-static DEVICE_ATTR(screen_state, 0664,
+static DEVICE_ATTR(screen_state, 0644,
 		thermal_screen_state_show, NULL);
 #endif
 
@@ -1676,12 +1668,14 @@ static ssize_t
 thermal_sconfig_store(struct device *dev,
 				      struct device_attribute *attr, const char *buf, size_t len)
 {
-	int val = -1;
+	int ret, val = -1;
 
-	val = simple_strtol(buf, NULL, 10);
+	ret = kstrtoint(buf, 10, &val);
 
 	atomic_set(&switch_mode, val);
 
+	if (ret)
+		return ret;
 	return len;
 }
 
@@ -1718,12 +1712,14 @@ static ssize_t
 thermal_temp_state_store(struct device *dev,
 				      struct device_attribute *attr, const char *buf, size_t len)
 {
-	int val = -1;
+	int ret, val = -1;
 
-	val = simple_strtol(buf, NULL, 10);
+	ret = kstrtoint(buf, 10, &val);
 
 	atomic_set(&temp_state, val);
 
+	if (ret)
+		return ret;
 	return len;
 }
 
@@ -1753,6 +1749,9 @@ cpu_limits_store(struct device *dev,
 
 	return len;
 }
+
+static DEVICE_ATTR(cpu_limits, 0664,
+		   cpu_limits_show, cpu_limits_store);
 
 static ssize_t
 thermal_board_sensor_show(struct device *dev,
@@ -1786,9 +1785,6 @@ thermal_board_sensor_temp_store(struct device *dev,
 static DEVICE_ATTR(board_sensor_temp, 0664,
 		thermal_board_sensor_temp_show, thermal_board_sensor_temp_store);
 
-static DEVICE_ATTR(cpu_limits, 0664,
-		   cpu_limits_show, cpu_limits_store);
-
 static int create_thermal_message_node(void)
 {
 	int ret = 0;
@@ -1818,7 +1814,7 @@ static int create_thermal_message_node(void)
 		ret = sysfs_create_file(&thermal_message_dev.kobj, &dev_attr_cpu_limits.attr);
 		if (ret < 0)
 			pr_warn("Thermal: create cpu limits node failed\n");
-		ret = sysfs_create_file(&thermal_message_dev.kobj, &dev_attr_board_sensor.attr);
+				ret = sysfs_create_file(&thermal_message_dev.kobj, &dev_attr_board_sensor.attr);
 		if (ret < 0)
 			pr_warn("Thermal: create board sensor node failed\n");
 
@@ -1889,14 +1885,14 @@ static int of_parse_thermal_message(void)
 	return 0;
 }
 
-
 static int __init thermal_init(void)
 {
 	int result;
 
 	mutex_init(&poweroff_lock);
 	thermal_passive_wq = alloc_workqueue("thermal_passive_wq",
-						WQ_UNBOUND | WQ_FREEZABLE,
+						WQ_HIGHPRI | WQ_UNBOUND
+						| WQ_FREEZABLE,
 						THERMAL_MAX_ACTIVE);
 	if (!thermal_passive_wq) {
 		result = -ENOMEM;
